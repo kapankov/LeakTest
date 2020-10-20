@@ -8,9 +8,10 @@
 void PrintUsage(void)
 {
     std::cout << "Usage:\n"
-        "    Injector.exe target.exe\n"
+        "    Injector.exe -d:file.dll -e:target.exe\n"
         "Options:\n"
-        "    target.exe : application to run.\n";
+        "    -d:file.dll   : start the process with file.dll.\n"
+        "    -e:target.exe : application to run.\n";
 }
 
 BOOL WINAPI InjectLib(LPPROCESS_INFORMATION pi, LPCTSTR pszDllPath)
@@ -60,70 +61,88 @@ BOOL WINAPI InjectLib(LPPROCESS_INFORMATION pi, LPCTSTR pszDllPath)
 
 int main(int argc, char* argv[])
 {
-    TCHAR szDllName[MAX_PATH] = _TEXT("LeakTest.dll");
+    LPCSTR pszDll = nullptr;
+    LPCSTR pszExe = nullptr;
     TCHAR szDllPath[MAX_PATH] = _TEXT("");
     TCHAR szCommandLine[MAX_PATH] = _TEXT("");
     size_t NumOfCharConverted = 0;
-
-    if (argc > 1)
+    for (int arg = 1; arg < argc && argv[arg][0] == '-'; arg++)
     {
+        LPSTR argn = argv[arg] + 1;
+        LPSTR argp = argn;
+        while (*argp && *argp != ':' && *argp != '=')
+            argp++;
+        if (*argp == ':' || *argp == '=')
+            *argp++ = '\0';
+
+        switch (argn[0]) {
+        case 'd':   // Set DLL path
+        case 'D':
+            pszDll = argp;
 #ifdef _UNICODE
-        mbstowcs_s(&NumOfCharConverted, szCommandLine, sizeof(szCommandLine) / sizeof(WCHAR), argv[1], strlen(argv[1]));
+            mbstowcs_s(&NumOfCharConverted, szDllPath, sizeof(szDllPath) / sizeof(WCHAR), argp, strlen(argp));
 #else
-        lstrcpy(szCommandLine, argv[1]);
+            lstrcpy(szDllName, argp);
 #endif
-        //TODO: проверить, что файл из szCommandLine существует
+            break;
+        case 'e':   // Set Exe path
+        case 'E':
+            pszExe = argp;
+#ifdef _UNICODE
+            mbstowcs_s(&NumOfCharConverted, szCommandLine, sizeof(szCommandLine) / sizeof(WCHAR), argp, strlen(argp));
+#else
+            lstrcpy(szCommandLine, argp);
+#endif
 
-        // получить путь к dll
-        if (GetModuleFileName(nullptr, szDllPath, sizeof(szDllPath) / sizeof(TCHAR)) > 0)
-        {
-            int iLen = lstrlen(szDllPath);
-            while (szDllPath[--iLen] != _TEXT('\\')) { szDllPath[iLen] = 0; }
-            lstrcat(szDllPath, szDllName);
-        }
-        //TODO: проверить szDllPath
-
-        // запустить
-        STARTUPINFO si;
-        PROCESS_INFORMATION pi;
-        ZeroMemory(&si, sizeof(STARTUPINFO));
-        ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
-        si.cb = sizeof(STARTUPINFO);
-        BOOL ret = ::CreateProcess(
-            nullptr,
-            szCommandLine,
-            nullptr,
-            nullptr,
-            TRUE,
-            CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED,
-            nullptr,
-            nullptr,
-            &si,
-            &pi
-        );
-        if (ret)
-        {
-            std::cout << argv[1] << " successfully started.\n";
-            // сделать прививку
-            if (InjectLib(&pi, szDllPath))
-            {
-                std::cout << szDllPath << " injection successfull.\n";
-            }
-            // запустить поток
-            ::ResumeThread(pi.hThread);
-            //TODO: можно подождать и что-нибудь сделать полезное
-            // EjectLib(dwProcessId, szLibFile)
-        }
-        else
-        {
-            DWORD dwError = GetLastError();
-            std::cout << argv[1] << " failed: " << dwError << std::endl;
+            break;
         }
     }
-    else
+
+    if (!*szDllPath || !*szCommandLine)
     {
         PrintUsage();
         return 9001;
     }
+
+    //TODO: проверить szDllPath + szCommandLine
+
+    // запустить
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(STARTUPINFO));
+    ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
+    si.cb = sizeof(STARTUPINFO);
+    BOOL ret = ::CreateProcess(
+        nullptr,
+        szCommandLine,
+        nullptr,
+        nullptr,
+        TRUE,
+        CREATE_DEFAULT_ERROR_MODE | CREATE_SUSPENDED,
+        nullptr,
+        nullptr,
+        &si,
+        &pi
+    );
+    if (ret)
+    {
+        std::cout << pszExe << " successfully started.\n";
+        // сделать прививку
+        if (InjectLib(&pi, szDllPath))
+        {
+            std::cout << pszDll << " injection successfull.\n";
+        }
+        // запустить поток
+        ::ResumeThread(pi.hThread);
+        //TODO: можно подождать и что-нибудь сделать полезное
+        // EjectLib(dwProcessId, szLibFile)
+    }
+    else
+    {
+        DWORD dwError = GetLastError();
+        std::cout << pszExe << " failed: " << dwError << std::endl;
+        return 9002;
+    }
+
     return 0;
 }
