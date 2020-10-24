@@ -10,5 +10,7 @@
 // add headers that you want to pre-compile here
 #include "framework.h"
 #include "imprepl.h"
+#include "safe_ptr.h"
+#include "callstack.h"
 
 #endif //PCH_H

@@ -2,6 +2,27 @@
 
 #pragma comment(lib, "Dbghelp.lib")
 
+void PrintImageImportW(HMODULE hmodCaller)
+{
+    ULONG ulSize = 0;
+    // получить адрес секции импорта
+    PIMAGE_IMPORT_DESCRIPTOR pImportDesc =
+        (PIMAGE_IMPORT_DESCRIPTOR)::ImageDirectoryEntryToData(
+            hmodCaller, TRUE, IMAGE_DIRECTORY_ENTRY_IMPORT, &ulSize);
+    if (pImportDesc == nullptr)
+        return; // в этом модуле нет раздела импорта
+    OutputDebugString(L"Image import:");
+    for (; pImportDesc->Name; pImportDesc++)
+    {
+        PSTR pszModName = (PSTR)((PBYTE)hmodCaller + pImportDesc->Name);
+        int wchars_num = MultiByteToWideChar(CP_UTF8, 0, pszModName, -1, NULL, 0);
+        wchar_t* pwcString = (wchar_t*)malloc((wchars_num + 1) * sizeof(wchar_t));
+        MultiByteToWideChar(CP_UTF8, 0, pszModName, -1, pwcString, wchars_num);
+        OutputDebugString(pwcString);
+        free(pwcString);
+    }
+}
+
 BOOL ReplaceIATEntryInOneMod(PCSTR pszCalleeModName, PROC pfnCurrent, PROC pfnNew, HMODULE hmodCaller)
 {
     ULONG ulSize = 0;
@@ -11,6 +32,7 @@ BOOL ReplaceIATEntryInOneMod(PCSTR pszCalleeModName, PROC pfnCurrent, PROC pfnNe
             hmodCaller, TRUE, IMAGE_DIRECTORY_ENTRY_IMPORT, &ulSize);
     if (pImportDesc == nullptr)
         return FALSE; // в этом модуле нет раздела импорта
+
     // находим дескриптор  раздела импорта  со ссылками
     // на функции Dll вызываемого модуля
     for (; pImportDesc->Name; pImportDesc++)

@@ -5,3 +5,5 @@
 #include <windows.h>
 #include <dbghelp.h>
 #include <tchar.h>
+#include <memory>
+#include <map>

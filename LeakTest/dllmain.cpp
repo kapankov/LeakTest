@@ -2,72 +2,65 @@
 #include "pch.h"
 
 static DWORD s_dwTlsIndex;
+using AllocMap = std::map<void*, std::wstring>;
+static safe_ptr <AllocMap> g_AllocMap;
 
-typedef HANDLE
-(WINAPI* type_CreateFileA)(
-    LPCSTR lpFileName,
-    DWORD dwDesiredAccess,
-    DWORD dwShareMode,
-    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-    DWORD dwCreationDisposition,
-    DWORD dwFlagsAndAttributes,
-    HANDLE hTemplateFile
-);
-typedef HANDLE
-(WINAPI* type_CreateFileW)(
-    LPCWSTR lpFileName,
-    DWORD dwDesiredAccess,
-    DWORD dwShareMode,
-    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-    DWORD dwCreationDisposition,
-    DWORD dwFlagsAndAttributes,
-    HANDLE hTemplateFile
-);
 
-typedef BOOL
-(WINAPI* type_CloseHandle)(HANDLE hObject);
+typedef void* (__cdecl* type_malloc)(size_t);
+typedef void* (__cdecl* type_realloc)(void* _Block, size_t _Size);
+typedef void (__cdecl* type_free)(void* _Block);
 
-type_CreateFileA True_CreateFileA = nullptr;
-type_CreateFileW True_CreateFileW = nullptr;
-type_CloseHandle True_CloseHandle = nullptr;
+type_malloc True_malloc = nullptr;
+type_realloc True_realloc = nullptr;
+type_free True_free = nullptr;
 
-static HANDLE g_hFile = nullptr;
-HANDLE WINAPI Mine_CreateFileA(
-    LPCSTR lpFileName,
-    DWORD dwDesiredAccess,
-    DWORD dwShareMode,
-    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-    DWORD dwCreationDisposition,
-    DWORD dwFlagsAndAttributes,
-    HANDLE hTemplateFile)
+void* __cdecl Mine_malloc(size_t _Size)
 {
-    ::OutputDebugString(_TEXT("CreateFileA called!"));
-    return g_hFile = True_CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+    ::OutputDebugString(_TEXT("malloc called!"));
+    void* result = True_malloc(_Size);
+    if (result)
+        (*g_AllocMap)[result] = GetCallStack(L"malloc");
+    return result;
 }
 
-HANDLE WINAPI Mine_CreateFileW(
-    LPCWSTR lpFileName,
-    DWORD dwDesiredAccess,
-    DWORD dwShareMode,
-    LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-    DWORD dwCreationDisposition,
-    DWORD dwFlagsAndAttributes,
-    HANDLE hTemplateFile)
+void* __cdecl Mine_realloc(void* _Block, size_t _Size)
 {
-    ::OutputDebugString(_TEXT("CreateFileW called!"));
-    return g_hFile = True_CreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
-}
-
-BOOL WINAPI Mine_CloseHandle(HANDLE hObject)
-{
-    ::OutputDebugString(_TEXT("CloseHandle called!"));
-    if (g_hFile == hObject)
+    ::OutputDebugString(_TEXT("realloc called!"));
+    void* result = True_realloc(_Block, _Size);
+    if (result)
     {
-        TCHAR szSign[MINCHAR] = _TEXT("<Hacked by Interceptor>");
-        DWORD dwWritten = 0;
-        WriteFile(hObject, szSign, lstrlen(szSign) * sizeof(TCHAR), &dwWritten, nullptr);
+        g_AllocMap->erase(_Block);
+        (*g_AllocMap)[result] = GetCallStack(L"realloc");
+
     }
-    return True_CloseHandle(hObject);
+    return result;
+}
+
+void __cdecl Mine_free(void* _Block)
+{
+    ::OutputDebugString(_TEXT("free called!"));
+    True_free(_Block);
+    g_AllocMap->erase(_Block);
+}
+
+// ****************************************************************************
+void Analize()
+{
+    wchar_t szOutDebug[4096] = {};
+    // Allocations
+    size_t cntAlloc = 0;
+    for (AllocMap::iterator it = g_AllocMap->begin(); it != g_AllocMap->end(); ++it)
+    {
+        _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Pointer: %I64X\n%s\n", reinterpret_cast<DWORD_PTR>(it->first), it->second.c_str());
+        OutputDebugString(szOutDebug);
+        cntAlloc++;
+    }
+    UnloadSymbols();
+    OutputDebugString(L"************************************************\n");
+    _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Memory leaks: %zu\n", cntAlloc);
+    OutputDebugString(szOutDebug);
+    OutputDebugString(L"************************************************\n");
+
 }
 
 BOOL ThreadAttach(HMODULE hDll)
@@ -82,18 +75,20 @@ BOOL ProcessAttach(HMODULE hDll)
     if ((s_dwTlsIndex = TlsAlloc()) == TLS_OUT_OF_INDEXES)
         return FALSE;
 
-    HMODULE hUserDll = ::GetModuleHandle(_TEXT("Kernel32.dll"));
-    True_CreateFileA = (type_CreateFileA)::GetProcAddress(hUserDll, "CreateFileA");
-    True_CreateFileW = (type_CreateFileW)::GetProcAddress(hUserDll, "CreateFileW");
-    True_CloseHandle = (type_CloseHandle)::GetProcAddress(hUserDll, "CloseHandle");
+    PrintImageImportW(::GetModuleHandle(nullptr));
+
+    HMODULE hModule = ::GetModuleHandle(_TEXT("api-ms-win-crt-heap-l1-1-0.dll"));
+    True_malloc = (type_malloc)::GetProcAddress(hModule, "malloc");
+    True_realloc = (type_realloc)::GetProcAddress(hModule, "realloc");
+    True_free = (type_free)::GetProcAddress(hModule, "free");
 
     HMODULE hmodCaller = ::GetModuleHandle(nullptr);
-    if (!ReplaceIATEntryInOneMod("Kernel32.dll", (PROC)True_CreateFileA, (PROC)Mine_CreateFileA, hmodCaller))
-        ::OutputDebugString(_TEXT("CreateFileA replacement failed"));
-    if (!ReplaceIATEntryInOneMod("Kernel32.dll", (PROC)True_CreateFileW, (PROC)Mine_CreateFileW, hmodCaller))
-        ::OutputDebugString(_TEXT("CreateFileW replacement failed"));
-    if (!ReplaceIATEntryInOneMod("Kernel32.dll", (PROC)True_CloseHandle, (PROC)Mine_CloseHandle, hmodCaller))
-        ::OutputDebugString(_TEXT("CloseHandle replacement failed"));
+    if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_malloc, (PROC)Mine_malloc, hmodCaller))
+        ::OutputDebugString(_TEXT("malloc replacement failed"));
+    if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_realloc, (PROC)Mine_realloc, hmodCaller))
+        ::OutputDebugString(_TEXT("realloc replacement failed"));
+    if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_free, (PROC)Mine_free, hmodCaller))
+        ::OutputDebugString(_TEXT("free replacement failed"));
     return ThreadAttach(hDll);
 }
 
@@ -106,6 +101,7 @@ BOOL ThreadDetach(HMODULE hDll)
 BOOL ProcessDetach(HMODULE hDll)
 {
     ::OutputDebugString(_TEXT("LeakTest DLL_PROCESS_DETACH"));
+    Analize();
     ThreadDetach(hDll);
     TlsFree(s_dwTlsIndex);
     return TRUE;
