@@ -128,6 +128,16 @@ void DoTest()
     //free(pwcString);
     // а еще забыли сделать delete 
     //delete iValue;
+
+    LPTSTR szHeapText = (LPTSTR)::HeapAlloc(::GetProcessHeap(), HEAP_ZERO_MEMORY, 16 * sizeof(TCHAR));
+    lstrcpy(szHeapText, _TEXT("HeapAlloc test"));
+    szHeapText = (LPTSTR)::HeapReAlloc(::GetProcessHeap(), 0, szHeapText, MINCHAR * sizeof(TCHAR));
+    lstrcat(szHeapText, _TEXT(" with HeapReAlloc"));
+
+    OutputDebugString(szHeapText);
+    // забыли сделать HeapFree
+    //HeapFree(::GetProcessHeap(), 0, szHeapText);
+
 }
 
 //
