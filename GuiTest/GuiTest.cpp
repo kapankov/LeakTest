@@ -120,12 +120,15 @@ void DoTest()
     std::array<char, 10> str;
     std::to_chars(str.data(), str.data() + str.size(), *iValue);
     int wchars_num = MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, NULL, 0);
-    wchar_t* pwcString = (wchar_t*)malloc((wchars_num + 1) * sizeof(wchar_t));
-    MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, pwcString, wchars_num);
-
-    OutputDebugString(pwcString);
+    wchar_t* wszMalloc = (wchar_t*)malloc((wchars_num + 1) * sizeof(wchar_t));
+    MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, wszMalloc, wchars_num);
+    OutputDebugString(wszMalloc);
+    LPTSTR szCalloc = (LPTSTR)calloc(16, sizeof(TCHAR));
+    lstrcpy(szCalloc, L"calloc");
+    OutputDebugString(szCalloc);
     // забыли сделать free
-    //free(pwcString);
+    //free(szCalloc)
+    //free(wszMalloc);
     // а еще забыли сделать delete 
     //delete iValue;
 

@@ -8,18 +8,18 @@ using HeapAllocMap = std::map<HANDLE, AllocMap>;
 static safe_ptr<HeapAllocMap> g_HeapAllocMap;
 
 typedef void* (__cdecl* type_malloc)(size_t);
+typedef void* (__cdecl* type_calloc)(size_t _Count, size_t _Size);
 typedef void* (__cdecl* type_realloc)(void*, size_t);
 typedef void (__cdecl* type_free)(void*);
-//typedef HANDLE (WINAPI* type_HeapCreate)(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize);
 typedef BOOL (WINAPI* type_HeapDestroy)(HANDLE hHeap);
 typedef LPVOID (WINAPI* type_HeapAlloc)(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes);
 typedef LPVOID (WINAPI* type_HeapReAlloc)(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T dwBytes);
 typedef BOOL (WINAPI* type_HeapFree)(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem);
 
 type_malloc True_malloc = nullptr;
+type_calloc True_calloc = nullptr;
 type_realloc True_realloc = nullptr;
 type_free True_free = nullptr;
-//type_HeapCreate True_HeapCreate = nullptr;
 type_HeapDestroy True_HeapDestroy = nullptr;
 type_HeapAlloc True_HeapAlloc = nullptr;
 type_HeapReAlloc True_HeapReAlloc = nullptr;
@@ -31,6 +31,15 @@ void* __cdecl Mine_malloc(size_t _Size)
     void* result = True_malloc(_Size);
     if (result)
         (*g_AllocMap)[result] = GetCallStack(L"malloc");
+    return result;
+}
+
+void* __cdecl Mine_calloc(size_t _Count, size_t _Size)
+{
+    ::OutputDebugString(_TEXT("calloc called!"));
+    void* result = True_calloc(_Count, _Size);
+    if (result)
+        (*g_AllocMap)[result] = GetCallStack(L"calloc");
     return result;
 }
 
@@ -52,14 +61,6 @@ void __cdecl Mine_free(void* _Block)
     True_free(_Block);
     g_AllocMap->erase(_Block);
 }
-
-/*HANDLE WINAPI Mine_HeapCreate(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize)
-{
-    ::OutputDebugString(_TEXT("HeapCreate called!"));
-    HANDLE result = True_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
-
-    return result;
-}*/
 
 BOOL WINAPI Mine_HeapDestroy(HANDLE hHeap)
 {
@@ -145,12 +146,15 @@ BOOL ProcessAttach(HMODULE hDll)
 
     HMODULE hModule = ::GetModuleHandle(_TEXT("api-ms-win-crt-heap-l1-1-0.dll"));
     True_malloc = (type_malloc)::GetProcAddress(hModule, "malloc");
+    True_calloc = (type_calloc)::GetProcAddress(hModule, "calloc");
     True_realloc = (type_realloc)::GetProcAddress(hModule, "realloc");
     True_free = (type_free)::GetProcAddress(hModule, "free");
 
     HMODULE hmodCaller = ::GetModuleHandle(nullptr);
     if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_malloc, (PROC)Mine_malloc, hmodCaller))
         ::OutputDebugString(_TEXT("malloc replacement failed"));
+    if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_calloc, (PROC)Mine_calloc, hmodCaller))
+        ::OutputDebugString(_TEXT("calloc replacement failed"));
     if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_realloc, (PROC)Mine_realloc, hmodCaller))
         ::OutputDebugString(_TEXT("realloc replacement failed"));
     if (!ReplaceIATEntryInOneMod("api-ms-win-crt-heap-l1-1-0.dll", (PROC)True_free, (PROC)Mine_free, hmodCaller))
