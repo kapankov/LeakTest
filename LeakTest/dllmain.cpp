@@ -3,12 +3,15 @@
 
 static DWORD s_dwTlsIndex;
 using AllocMap = std::map<void*, std::wstring>;
-static safe_ptr <AllocMap> g_AllocMap;
-
+static safe_ptr<AllocMap> g_AllocMap;
+using HeapAllocMap = std::map<HANDLE, AllocMap>;
+static safe_ptr<HeapAllocMap> g_HeapAllocMap;
 
 typedef void* (__cdecl* type_malloc)(size_t);
 typedef void* (__cdecl* type_realloc)(void*, size_t);
 typedef void (__cdecl* type_free)(void*);
+//typedef HANDLE (WINAPI* type_HeapCreate)(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize);
+typedef BOOL (WINAPI* type_HeapDestroy)(HANDLE hHeap);
 typedef LPVOID (WINAPI* type_HeapAlloc)(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes);
 typedef LPVOID (WINAPI* type_HeapReAlloc)(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T dwBytes);
 typedef BOOL (WINAPI* type_HeapFree)(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem);
@@ -16,6 +19,8 @@ typedef BOOL (WINAPI* type_HeapFree)(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem);
 type_malloc True_malloc = nullptr;
 type_realloc True_realloc = nullptr;
 type_free True_free = nullptr;
+//type_HeapCreate True_HeapCreate = nullptr;
+type_HeapDestroy True_HeapDestroy = nullptr;
 type_HeapAlloc True_HeapAlloc = nullptr;
 type_HeapReAlloc True_HeapReAlloc = nullptr;
 type_HeapFree True_HeapFree = nullptr;
@@ -48,12 +53,29 @@ void __cdecl Mine_free(void* _Block)
     g_AllocMap->erase(_Block);
 }
 
+/*HANDLE WINAPI Mine_HeapCreate(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize)
+{
+    ::OutputDebugString(_TEXT("HeapCreate called!"));
+    HANDLE result = True_HeapCreate(flOptions, dwInitialSize, dwMaximumSize);
+
+    return result;
+}*/
+
+BOOL WINAPI Mine_HeapDestroy(HANDLE hHeap)
+{
+    ::OutputDebugString(_TEXT("HeapDestroy called!"));
+    BOOL result = True_HeapDestroy(hHeap);
+    if (result)
+        g_HeapAllocMap->erase(hHeap);
+    return result;
+}
+
 LPVOID WINAPI Mine_HeapAlloc(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes)
 {
     ::OutputDebugString(_TEXT("HeapAlloc called!"));
     LPVOID result = True_HeapAlloc(hHeap, dwFlags, dwBytes);
     if (result)
-        (*g_AllocMap)[result] = GetCallStack(L"HeapAlloc");
+        (*g_HeapAllocMap)[hHeap][result] = GetCallStack(L"HeapAlloc");
     return result;
 }
 
@@ -64,7 +86,7 @@ LPVOID WINAPI Mine_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T
     if (result)
     {
         g_AllocMap->erase(lpMem);
-        (*g_AllocMap)[result] = GetCallStack(L"HeapReAlloc");
+        (*g_HeapAllocMap)[hHeap][result] = GetCallStack(L"HeapReAlloc");
     }
     return result;
 }
@@ -74,7 +96,7 @@ BOOL WINAPI Mine_HeapFree(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem)
     ::OutputDebugString(_TEXT("HeapFree called!"));
     BOOL result = True_HeapFree(hHeap, dwFlags, lpMem);
     if (result)
-        g_AllocMap->erase(lpMem);
+        (*g_HeapAllocMap)[hHeap].erase(lpMem);
     return result;
 }
 
@@ -82,6 +104,7 @@ BOOL WINAPI Mine_HeapFree(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem)
 void Analize()
 {
     wchar_t szOutDebug[4096] = {};
+    OutputDebugString(L"************************************************\n");
     // Allocations
     size_t cntAlloc = 0;
     for (AllocMap::iterator it = g_AllocMap->begin(); it != g_AllocMap->end(); ++it)
@@ -90,6 +113,14 @@ void Analize()
         OutputDebugString(szOutDebug);
         cntAlloc++;
     }
+    for (HeapAllocMap::iterator it = g_HeapAllocMap->begin(); it != g_HeapAllocMap->end(); ++it)
+    {
+        for (AllocMap::iterator vit = it->second.begin(); vit != it->second.end(); ++vit)
+        _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Pointer: %I64X\n%s\n", reinterpret_cast<DWORD_PTR>(vit->first), vit->second.c_str());
+        OutputDebugString(szOutDebug);
+        cntAlloc++;
+    }
+
     UnloadSymbols();
     OutputDebugString(L"************************************************\n");
     _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Memory leaks: %zu\n", cntAlloc);
@@ -126,9 +157,15 @@ BOOL ProcessAttach(HMODULE hDll)
         ::OutputDebugString(_TEXT("free replacement failed"));
 
     hModule = ::GetModuleHandle(_TEXT("KERNEL32.dll"));
+ //   True_HeapCreate = (type_HeapCreate)::GetProcAddress(hModule, "HeapCreate");
+    True_HeapDestroy = (type_HeapDestroy)::GetProcAddress(hModule, "HeapDestroy");
     True_HeapAlloc = (type_HeapAlloc)::GetProcAddress(hModule, "HeapAlloc");
     True_HeapReAlloc = (type_HeapReAlloc)::GetProcAddress(hModule, "HeapReAlloc");
     True_HeapFree = (type_HeapFree)::GetProcAddress(hModule, "HeapFree");
+/*    if (!ReplaceIATEntryInOneMod("KERNEL32.dll", (PROC)True_HeapCreate, (PROC)Mine_HeapCreate, hmodCaller))
+        ::OutputDebugString(_TEXT("HeapCreate replacement failed"));*/
+    if (!ReplaceIATEntryInOneMod("KERNEL32.dll", (PROC)True_HeapDestroy, (PROC)Mine_HeapDestroy, hmodCaller))
+        ::OutputDebugString(_TEXT("HeapDestroy replacement failed"));
     if (!ReplaceIATEntryInOneMod("KERNEL32.dll", (PROC)True_HeapAlloc, (PROC)Mine_HeapAlloc, hmodCaller))
         ::OutputDebugString(_TEXT("HeapAlloc replacement failed"));
     if (!ReplaceIATEntryInOneMod("KERNEL32.dll", (PROC)True_HeapReAlloc, (PROC)Mine_HeapReAlloc, hmodCaller))
