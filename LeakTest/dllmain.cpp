@@ -89,10 +89,24 @@ BOOL WINAPI Mine_HeapDestroy(HANDLE hHeap)
     CntGuard guard;
     if (guard.IsNotZero())
         return True_HeapDestroy(hHeap);
+    OutputDebugString(L"************************************************\n");
     ::OutputDebugString(_TEXT("HeapDestroy called!"));
     BOOL result = True_HeapDestroy(hHeap);
     if (result)
+    {
+        HeapAllocMap::iterator it = g_HeapAllocMap->find(hHeap);
+        if (it != g_HeapAllocMap->end())
+        {
+            wchar_t szOutDebug[4096] = {};
+            for (AllocMap::iterator vit = it->second.begin(); vit != it->second.end(); ++vit)
+            {
+                _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Pointer: %I64X\n%s\n", reinterpret_cast<DWORD_PTR>(vit->first), vit->second.c_str());
+                OutputDebugString(szOutDebug);
+            }
+        }
         g_HeapAllocMap->erase(hHeap);
+    }
+    OutputDebugString(L"************************************************\n");
     return result;
 }
 
@@ -151,9 +165,11 @@ void Analize()
     for (HeapAllocMap::iterator it = g_HeapAllocMap->begin(); it != g_HeapAllocMap->end(); ++it)
     {
         for (AllocMap::iterator vit = it->second.begin(); vit != it->second.end(); ++vit)
-        _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Pointer: %I64X\n%s\n", reinterpret_cast<DWORD_PTR>(vit->first), vit->second.c_str());
-        OutputDebugString(szOutDebug);
-        cntAlloc++;
+        {
+            _snwprintf_s(szOutDebug, sizeof(szOutDebug) / sizeof(wchar_t), sizeof(szOutDebug) / sizeof(wchar_t) - 1, L"Pointer: %I64X\n%s\n", reinterpret_cast<DWORD_PTR>(vit->first), vit->second.c_str());
+            OutputDebugString(szOutDebug);
+            cntAlloc++;
+        }
     }
 
     UnloadSymbols();
