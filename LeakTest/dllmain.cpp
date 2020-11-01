@@ -2,6 +2,28 @@
 #include "pch.h"
 
 static DWORD s_dwTlsIndex;
+
+class CntGuard
+{
+    DWORD m_value;
+public:
+    CntGuard() : m_value(0)
+    {
+        m_value = (DWORD)(DWORD_PTR)TlsGetValue(s_dwTlsIndex);
+        if (m_value == 0)
+            TlsSetValue(s_dwTlsIndex, (PVOID)(DWORD_PTR)1);
+    }
+    ~CntGuard()
+    {
+        if (m_value == 0)
+            TlsSetValue(s_dwTlsIndex, (PVOID)(DWORD_PTR)0);
+    }
+    BOOL IsNotZero()
+    {
+        return m_value>0;
+    }
+};
+
 using AllocMap = std::map<void*, std::wstring>;
 static safe_ptr<AllocMap> g_AllocMap;
 using HeapAllocMap = std::map<HANDLE, AllocMap>;
@@ -64,6 +86,9 @@ void __cdecl Mine_free(void* _Block)
 
 BOOL WINAPI Mine_HeapDestroy(HANDLE hHeap)
 {
+    CntGuard guard;
+    if (guard.IsNotZero())
+        return True_HeapDestroy(hHeap);
     ::OutputDebugString(_TEXT("HeapDestroy called!"));
     BOOL result = True_HeapDestroy(hHeap);
     if (result)
@@ -73,6 +98,9 @@ BOOL WINAPI Mine_HeapDestroy(HANDLE hHeap)
 
 LPVOID WINAPI Mine_HeapAlloc(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes)
 {
+    CntGuard guard;
+    if (guard.IsNotZero()) // Отсекаем все "внутренние" вызовы HeapAlloc
+        return True_HeapAlloc(hHeap, dwFlags, dwBytes);
     ::OutputDebugString(_TEXT("HeapAlloc called!"));
     LPVOID result = True_HeapAlloc(hHeap, dwFlags, dwBytes);
     if (result)
@@ -82,6 +110,9 @@ LPVOID WINAPI Mine_HeapAlloc(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes)
 
 LPVOID WINAPI Mine_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T dwBytes)
 {
+    CntGuard guard;
+    if (guard.IsNotZero())
+        return True_HeapReAlloc(hHeap, dwFlags, lpMem, dwBytes);
     ::OutputDebugString(_TEXT("HeapReAlloc called!"));
     LPVOID result = True_HeapReAlloc(hHeap, dwFlags, lpMem, dwBytes);
     if (result)
@@ -94,6 +125,9 @@ LPVOID WINAPI Mine_HeapReAlloc(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T
 
 BOOL WINAPI Mine_HeapFree(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem)
 {
+    CntGuard guard;
+    if (guard.IsNotZero())
+        return True_HeapFree(hHeap, dwFlags, lpMem);
     ::OutputDebugString(_TEXT("HeapFree called!"));
     BOOL result = True_HeapFree(hHeap, dwFlags, lpMem);
     if (result)
